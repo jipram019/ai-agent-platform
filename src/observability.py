@@ -178,24 +178,74 @@ class ObservabilityConfig:
                         span.set_attribute(key, value)
                     elif isinstance(value, (list, tuple)):
                         # Convert lists to comma-separated strings
-                        span.set_attribute(key, ",".join(str(v) for v in value))
+                        try:
+                            span.set_attribute(key, ",".join(str(v) for v in value))
+                        except:
+                            span.set_attribute(key, str(value))
                     else:
                         # Convert complex objects to strings
-                        span.set_attribute(key, str(value))
+                        try:
+                            span.set_attribute(key, str(value))
+                        except:
+                            # Skip this attribute if it can't be converted
+                            continue
                 
                 # Add trace context to logger
                 trace_id = format(span.get_span_context().trace_id, "032x")
                 span_id = format(span.get_span_context().span_id, "016x")
                 
-                logger = self.logger.bind(
-                    trace_id=trace_id,
-                    span_id=span_id,
-                    operation=operation_name,
-                    **attributes
-                )
+                # Only include simple attributes in logger binding
+                logger_attrs = {
+                    "trace_id": trace_id,
+                    "span_id": span_id,
+                    "operation": operation_name
+                }
+                
+                # Add only simple type attributes to logger
+                for key, value in attributes.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        logger_attrs[key] = value
+                    else:
+                        # Convert complex objects to strings for logging
+                        try:
+                            logger_attrs[key] = str(value)
+                        except:
+                            logger_attrs[key] = "complex_object"
+                
+                logger = self.logger.bind(**logger_attrs)
                 
                 logger.info("Operation started")
-                yield logger
+                
+                # Create a safe logger that filters complex objects
+                class SafeLogger:
+                    def __init__(self, logger):
+                        self.logger = logger
+                    
+                    def _filter_kwargs(self, kwargs):
+                        safe_kwargs = {}
+                        for k, v in kwargs.items():
+                            if isinstance(v, (str, int, float, bool)):
+                                safe_kwargs[k] = v
+                            else:
+                                try:
+                                    safe_kwargs[k] = str(v)
+                                except:
+                                    safe_kwargs[k] = "complex_object"
+                        return safe_kwargs
+                    
+                    def info(self, message, **kwargs):
+                        safe_kwargs = self._filter_kwargs(kwargs)
+                        self.logger.info(message, **safe_kwargs)
+                    
+                    def warning(self, message, **kwargs):
+                        safe_kwargs = self._filter_kwargs(kwargs)
+                        self.logger.warning(message, **safe_kwargs)
+                    
+                    def error(self, message, **kwargs):
+                        safe_kwargs = self._filter_kwargs(kwargs)
+                        self.logger.error(message, **safe_kwargs)
+                
+                yield SafeLogger(logger)
                 
             except Exception as e:
                 span.record_exception(e)
