@@ -11,7 +11,12 @@ from pydantic import BaseModel
 from typing import Optional
 from src.models import Priority, TaskStatus, TaskResult
 from src.orchestrator import run_task
-from src.config import MAX_CONCURRENT_TASKS, TASK_TIMEOUT_SECONDS
+from src.config import (
+    MAX_CONCURRENT_TASKS,
+    TASK_TIMEOUT_LOW,
+    TASK_TIMEOUT_NORMAL,
+    TASK_TIMEOUT_URGENT,
+)
 from src.observability import obs
 
 app = FastAPI(title="Agent Execution Service")
@@ -115,9 +120,9 @@ async def create_task(body: CreateTaskBody, request: Request):
                     )
 
         # Adaptive timeout based on task priority
-        if body.priority == "urgent":
+        if body.priority == Priority.URGENT:
             timeout_seconds = TASK_TIMEOUT_URGENT
-        elif body.priority == "normal":
+        elif body.priority == Priority.NORMAL:
             timeout_seconds = TASK_TIMEOUT_NORMAL
         else:  # low priority
             timeout_seconds = TASK_TIMEOUT_LOW

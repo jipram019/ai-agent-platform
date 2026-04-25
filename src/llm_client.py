@@ -168,7 +168,10 @@ class _TenantBucket:
 
 
 # Global intelligent rate limiter for LLM calls
-_rate_limiter = _IntelligentTokenBucket(rate=LLM_RATE_LIMIT_RPS, capacity=LLM_RATE_LIMIT_BURST)
+_rate_limiter = _IntelligentTokenBucket(
+    base_rate=LLM_RATE_LIMIT_RPS,
+    base_capacity=LLM_RATE_LIMIT_BURST,
+)
 
 # Global circuit breaker for LLM service protection
 _circuit_breaker = _CircuitBreaker(failure_threshold=5, recovery_timeout=30, half_open_max_calls=3)

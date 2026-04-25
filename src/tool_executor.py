@@ -14,9 +14,18 @@ async def execute_tool(tool_name: str, args: dict) -> dict:
     """Execute a single tool and return its result."""
     start_time = time.time()
     
+    # Keep a compact, telemetry-safe preview of tool inputs for traces/logs.
+    safe_args = {
+        k: v for k, v in args.items()
+        if isinstance(v, (bool, str, bytes, int, float)) or (
+            isinstance(v, (list, tuple))
+            and all(isinstance(item, (bool, str, bytes, int, float)) for item in v)
+        )
+    }
+    
     with obs.trace_operation("execute_tool", 
                             tool_name=tool_name,
-                            args=args) as logger:
+                            tool_args=safe_args) as logger:
         
         # Simulate variable latency per tool type
         latency_map = {
