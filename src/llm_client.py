@@ -34,13 +34,116 @@ def _get_client(timeout_seconds: float = 30) -> httpx.AsyncClient:
     return _http_client
 
 
-class _TokenBucket:
-    """Rate limiter to protect the downstream LLM service from overload
-    and prevent runaway inference costs during traffic spikes."""
+class _CircuitBreaker:
+    """Circuit breaker pattern to prevent cascading failures during LLM outages.
+    
+    States:
+    - CLOSED: Normal operation, requests pass through
+    - OPEN: All requests fail immediately
+    - HALF_OPEN: Limited requests allowed to test recovery
+    """
 
-    def __init__(self, rate: float, capacity: int):
-        self._rate = rate
-        self._capacity = capacity
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 30, 
+                 half_open_max_calls: int = 3):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        self.half_open_calls = 0
+        self._lock = asyncio.Lock()
+
+    async def call(self, func, *args, **kwargs):
+        """Execute function with circuit breaker protection."""
+        async with self._lock:
+            if self.state == "OPEN":
+                if time.time() - self.last_failure_time >= self.recovery_timeout:
+                    self.state = "HALF_OPEN"
+                    self.half_open_calls = 0
+                    obs.circuit_breaker_state.labels(state="half_open").inc()
+                else:
+                    obs.circuit_breaker_state.labels(state="open").inc()
+                    raise Exception("Circuit breaker is OPEN")
+
+            if self.state == "HALF_OPEN":
+                if self.half_open_calls >= self.half_open_max_calls:
+                    obs.circuit_breaker_state.labels(state="half_open_reject").inc()
+                    raise Exception("Circuit breaker HALF_OPEN limit reached")
+                self.half_open_calls += 1
+
+        try:
+            result = await func(*args, **kwargs)
+            
+            async with self._lock:
+                if self.state == "HALF_OPEN":
+                    if self.half_open_calls >= self.half_open_max_calls:
+                        self.state = "CLOSED"
+                        self.failure_count = 0
+                        obs.circuit_breaker_state.labels(state="closed").inc()
+            
+            return result
+            
+        except Exception as e:
+            async with self._lock:
+                self.failure_count += 1
+                self.last_failure_time = time.time()
+                
+                if self.failure_count >= self.failure_threshold:
+                    self.state = "OPEN"
+                    obs.circuit_breaker_state.labels(state="open").inc()
+                elif self.state == "HALF_OPEN":
+                    self.state = "OPEN"
+                    obs.circuit_breaker_state.labels(state="open").inc()
+                    
+            raise e
+
+
+class _IntelligentTokenBucket:
+    """Intelligent rate limiter with priority-based burst capacity and token bucket algorithm.
+    
+    Implements different rate limits based on task priority:
+    - Urgent tasks: 2x burst capacity, faster refill rate
+    - Normal tasks: standard burst capacity and refill rate
+    - Low priority: standard burst capacity, slower refill rate
+    """
+
+    def __init__(self, base_rate: float, base_capacity: int):
+        self.base_rate = base_rate
+        self.base_capacity = base_capacity
+        self._buckets = {}  # tenant_id -> _TenantBucket
+        self._lock = asyncio.Lock()
+
+    def _get_priority_multiplier(self, tenant_id: str) -> tuple[float, int]:
+        """Get rate and capacity multipliers based on tenant priority pattern."""
+        # Extract priority from tenant ID or use default
+        if "urgent" in tenant_id.lower() or tenant_id.endswith("-alpha"):
+            return 2.0, self.base_capacity * 2  # 2x rate, 2x burst for urgent
+        elif "low" in tenant_id.lower() or tenant_id.endswith("-gamma"):
+            return 0.8, self.base_capacity  # 0.8x rate, standard burst for low
+        else:
+            return 1.0, self.base_capacity  # Standard rate and burst for normal
+
+    async def acquire(self, tenant_id: str = "unknown"):
+        async with self._lock:
+            if tenant_id not in self._buckets:
+                rate_mult, capacity_mult = self._get_priority_multiplier(tenant_id)
+                self._buckets[tenant_id] = _TenantBucket(
+                    rate=self.base_rate * rate_mult,
+                    capacity=self.base_capacity * capacity_mult,
+                    tenant_id=tenant_id
+                )
+            
+            await self._buckets[tenant_id].acquire()
+
+
+class _TenantBucket:
+    """Per-tenant token bucket with individual rate limiting."""
+
+    def __init__(self, rate: float, capacity: int, tenant_id: str):
+        self.rate = rate
+        self.capacity = capacity
+        self.tenant_id = tenant_id
         self._tokens = float(capacity)
         self._last_refill = time.monotonic()
         self._lock = asyncio.Lock()
@@ -49,25 +152,29 @@ class _TokenBucket:
         async with self._lock:
             now = time.monotonic()
             elapsed = now - self._last_refill
-            self._tokens = min(self._capacity,
-                               self._tokens + elapsed * self._rate)
+            self._tokens = min(self.capacity,
+                               self._tokens + elapsed * self.rate)
             self._last_refill = now
+            
             while self._tokens < 1:
-                wait = (1 - self._tokens) / self._rate
+                wait = (1 - self._tokens) / self.rate
                 await asyncio.sleep(wait)
                 now = time.monotonic()
                 elapsed = now - self._last_refill
-                self._tokens = min(self._capacity,
-                                   self._tokens + elapsed * self._rate)
+                self._tokens = min(self.capacity,
+                                   self._tokens + elapsed * self.rate)
                 self._last_refill = now
             self._tokens -= 1
 
 
-# Global rate limiter for LLM calls
-_rate_limiter = _TokenBucket(rate=LLM_RATE_LIMIT_RPS, capacity=LLM_RATE_LIMIT_BURST)
+# Global intelligent rate limiter for LLM calls
+_rate_limiter = _IntelligentTokenBucket(rate=LLM_RATE_LIMIT_RPS, capacity=LLM_RATE_LIMIT_BURST)
+
+# Global circuit breaker for LLM service protection
+_circuit_breaker = _CircuitBreaker(failure_threshold=5, recovery_timeout=30, half_open_max_calls=3)
 
 
-async def call_llm(prompt: str, max_tokens: int = 512, timeout_seconds: float = 30) -> dict:
+async def call_llm(prompt: str, max_tokens: int = 512, timeout_seconds: float = 30, tenant_id: str = "unknown") -> dict:
     """Call the LLM inference endpoint with retry and exponential backoff.
 
     Returns a dict with keys: text, prompt_tokens, completion_tokens.
@@ -93,15 +200,21 @@ async def call_llm(prompt: str, max_tokens: int = 512, timeout_seconds: float = 
                                     max_attempts=RETRY_MAX_ATTEMPTS) as attempt_logger:
                 
                 try:
-                    await _rate_limiter.acquire()
-                    attempt_logger.info("Rate limit acquired", attempt=attempt + 1)
+                    async def make_llm_request():
+                        await _rate_limiter.acquire(tenant_id)
+                        attempt_logger.info("Rate limit acquired", attempt=attempt + 1, tenant_id=tenant_id)
+                        
+                        request_start = time.time()
+                        response = await client.post(
+                            f"{LLM_SERVER_URL}/v1/inference",
+                            json={"prompt": prompt, "max_tokens": max_tokens},
+                            headers={"X-Tenant-ID": tenant_id}
+                        )
+                        request_duration = time.time() - request_start
+                        return response, request_duration
                     
-                    request_start = time.time()
-                    response = await client.post(
-                        f"{LLM_SERVER_URL}/v1/inference",
-                        json={"prompt": prompt, "max_tokens": max_tokens},
-                    )
-                    request_duration = time.time() - request_start
+                    # Wrap the LLM request with circuit breaker
+                    response, request_duration = await _circuit_breaker.call(make_llm_request)
 
                     if response.status_code == 200:
                         data = response.json()
