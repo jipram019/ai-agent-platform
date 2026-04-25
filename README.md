@@ -36,6 +36,31 @@ A production-ready multi-tenant AI agent platform with comprehensive resilience 
 
 ---
 
+## 🌿 Branch Structure
+
+### Available Branches:
+- **`main`**: Original baseline code without observability features
+- **`observability`**: Production-ready implementation with all resilience mechanisms
+
+### For Testing and Production:
+```bash
+# Use observability branch for all testing and production deployment
+git checkout observability
+```
+
+### For Development:
+```bash
+# Start from original baseline (main) for new features
+git checkout main
+git checkout -b your-feature-branch
+
+# Or enhance existing observability features
+git checkout observability
+git checkout -b your-enhancement-branch
+```
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites:
@@ -44,9 +69,14 @@ A production-ready multi-tenant AI agent platform with comprehensive resilience 
 
 ### Deployment:
 ```bash
-# Clone and start the platform
-git clone <repository-url>
-cd agent-platform
+# Clone the repository
+git clone https://github.com/jipram019/ai-agent-platform.git
+cd ai-agent-platform
+
+# Checkout the observability branch for production-ready features
+git checkout observability
+
+# Start the platform with all resilience features
 docker-compose up -d
 
 # Wait for services to start (30 seconds)

@@ -80,6 +80,12 @@ The instrumentation distinguishes between:
 
 ### Test Results Evidence
 
+**Note**: To test these observability features, use the `observability` branch:
+```bash
+git checkout observability
+docker-compose up -d
+```
+
 **Live Test Execution:**
 ```bash
 curl -X POST http://localhost:8080/tasks \

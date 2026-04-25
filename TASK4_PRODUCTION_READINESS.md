@@ -84,6 +84,25 @@ The AI agent platform has achieved **PRODUCTION READY** status with all critical
 
 ## Deployment Recommendations
 
+### Quick Start Deployment
+```bash
+# Clone the repository
+git clone https://github.com/jipram019/ai-agent-platform.git
+cd ai-agent-platform
+
+# Checkout the observability branch for production-ready features
+git checkout observability
+
+# Deploy with Docker Compose
+docker-compose up -d
+
+# Wait for services to start
+sleep 30
+
+# Verify deployment
+curl http://localhost:8080/health
+```
+
 ### GCP/Kubernetes Deployment
 ```yaml
 # Production-ready deployment configuration
