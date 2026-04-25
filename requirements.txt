@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+httpx==0.27.0
+pydantic==2.9.0
+
+# Observability dependencies
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-instrumentation-fastapi==0.42b0
+opentelemetry-instrumentation-httpx==0.42b0
+opentelemetry-exporter-jaeger==1.21.0
+opentelemetry-exporter-prometheus==0.42b0
+prometheus-client==0.20.0
+structlog==24.4.0
+setuptools>=45
