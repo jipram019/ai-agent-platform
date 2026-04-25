@@ -120,6 +120,33 @@ http_request_duration_seconds_bucket{endpoint="/tasks",le="2.5",method="POST",pr
 ✅ **Token Usage**: LLM token consumption tracked (136 prompt + 701 completion tokens)  
 ✅ **End-to-End Correlation**: Single request trace spans from HTTP entry to task completion  
 
+## Prometheus Console Check Commands
+
+### HTTP Request Metrics
+```bash
+# Open Prometheus console
+open http://localhost:9090
+
+# Query examples:
+http_requests_total{tenant_id="tenant-3", priority="urgent"}
+http_requests_total{priority="urgent", status="200"}
+rate(http_requests_total[5m]) by (tenant_id, priority)
+```
+
+### Task Completion Metrics
+```bash
+tasks_total{priority="urgent", status="completed"}
+tasks_total{tenant_id="tenant-3"}
+sum(tasks_total) by (tenant_id, priority)
+```
+
+### Performance Metrics
+```bash
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])
+http_request_duration_seconds_sum{tenant_id="tenant-3"}
+```  
+
 
 
 
