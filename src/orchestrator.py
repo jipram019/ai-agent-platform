@@ -50,6 +50,7 @@ async def run_task(task_id: str, description: str,
                     prompt=f"Plan the following task: {description}",
                     max_tokens=256,
                     timeout_seconds=timeout_seconds,
+                    tenant_id=tenant_id,
                 )
                 
                 plan_duration = time.time() - plan_start
@@ -98,7 +99,7 @@ async def run_task(task_id: str, description: str,
                     f"Summarise results for task: {description}\n"
                     f"Tool outputs: {tool_results}"
                 )
-                summary = await call_llm(prompt=summary_prompt, max_tokens=512, timeout_seconds=timeout_seconds)
+                summary = await call_llm(prompt=summary_prompt, max_tokens=512, timeout_seconds=timeout_seconds, tenant_id=tenant_id)
                 
                 summary_duration = time.time() - summary_start
                 total_prompt_tokens += summary.get("prompt_tokens", 0)
@@ -136,6 +137,7 @@ async def run_task(task_id: str, description: str,
                     ),
                     max_tokens=128,
                     timeout_seconds=timeout_seconds,
+                    tenant_id=tenant_id,
                 )
                 
                 validation_duration = time.time() - validation_start
